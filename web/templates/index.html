@@ -1,0 +1,112 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>PolyVerba - Live Captions</title>
+    <link rel="stylesheet" href="/static/style.css">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600&display=swap" rel="stylesheet">
+</head>
+
+<body>
+    <div class="container">
+        <header>
+            <div class="logo">
+                <h1>PolyVerba</h1>
+                <span class="badge" id="sourceBadge">Edge Local</span>
+            </div>
+            <div class="controls">
+                <div class="select-group">
+                    <label>Source</label>
+                    <select id="sourceLang">
+                        <option value="auto" selected>Auto Detect</option>
+                        {% for code, name in languages.items() %}
+                        <option value="{{ code }}">{{ name }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+
+                <div class="select-group">
+                    <label>Target</label>
+                    <select id="targetLang">
+                        {% for code, name in languages.items() %}
+                        <option value="{{ code }}" {% if code=='hi' %}selected{% endif %}>{{ name }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+
+                <button id="btnStart" class="btn primary">Start</button>
+                <button id="btnStop" class="btn secondary" disabled>Stop</button>
+            </div>
+        </header>
+
+        <main>
+            <div id="captionBox" class="caption-box">
+                <div class="placeholder">
+                    <svg class="mascot" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" width="140" height="140">
+                        <style>
+                            .mascot-body { animation: mascot-float 3s ease-in-out infinite; transform-origin: center; }
+                            .mascot-head { animation: mascot-nod 4s ease-in-out infinite; transform-origin: 50% 50%; }
+                            .mascot-eye { animation: mascot-blink 5s infinite; transform-origin: center; }
+                            .mascot-note { animation: mascot-note-float 2s linear infinite; opacity: 0; }
+                            .mascot-note2 { animation: mascot-note-float 2.5s linear infinite 1s; opacity: 0; }
+                            .mascot-shadow { animation: mascot-shadow-pulse 3s ease-in-out infinite; transform-origin: center; }
+                            
+                            @keyframes mascot-float { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(-6px); } }
+                            @keyframes mascot-nod { 0%, 100% { transform: rotate(0deg); } 25% { transform: rotate(-3deg); } 75% { transform: rotate(3deg); } }
+                            @keyframes mascot-blink { 0%, 96%, 98% { transform: scaleY(1); } 97%, 99% { transform: scaleY(0.1); } }
+                            @keyframes mascot-note-float { 0% { transform: translate(0, 0) scale(0.5) rotate(0deg); opacity: 0; } 20% { opacity: 1; } 100% { transform: translate(15px, -25px) scale(1.2) rotate(15deg); opacity: 0; } }
+                            @keyframes mascot-shadow-pulse { 0%, 100% { transform: scaleX(1); opacity: 0.5; } 50% { transform: scaleX(0.85); opacity: 0.2; } }
+                        </style>
+                        <!-- Shadow -->
+                        <ellipse cx="50" cy="90" rx="30" ry="4" fill="rgba(148, 163, 184, 0.5)" class="mascot-shadow" />
+                        <!-- Floating Group -->
+                        <g class="mascot-body">
+                            <!-- Headphones Band -->
+                            <path d="M 22 45 Q 50 10 78 45" stroke="#cbd5e1" stroke-width="7" fill="none" stroke-linecap="round"/>
+                            <g class="mascot-head">
+                                <!-- Head Base -->
+                                <rect x="28" y="35" width="44" height="34" rx="10" fill="#ffffff" stroke="#94a3b8" stroke-width="2"/>
+                                <!-- Screen -->
+                                <rect x="33" y="42" width="34" height="18" rx="6" fill="#1e293b" />
+                                <!-- Eyes -->
+                                <circle cx="43" cy="51" r="3.5" fill="#60a5fa" class="mascot-eye"/>
+                                <circle cx="57" cy="51" r="3.5" fill="#60a5fa" class="mascot-eye"/>
+                                <!-- Smile -->
+                                <path d="M 45 56 Q 50 58 55 56" stroke="#60a5fa" stroke-width="1.5" fill="none" stroke-linecap="round"/>
+                            </g>
+                            <!-- Headphones Earpieces -->
+                            <rect x="18" y="38" width="12" height="26" rx="6" fill="var(--accent)" />
+                            <rect x="70" y="38" width="12" height="26" rx="6" fill="var(--accent)" />
+                            <!-- Playful Audio Notes -->
+                            <g class="mascot-note" stroke="var(--accent)" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round">
+                                <path d="M 85 30 L 85 20 L 95 23 L 95 33" />
+                                <circle cx="83" cy="30" r="2" fill="var(--accent)"/>
+                                <circle cx="93" cy="33" r="2" fill="var(--accent)"/>
+                            </g>
+                            <g class="mascot-note2" stroke="var(--accent)" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round">
+                                <path d="M 15 25 L 15 15 L 25 18 L 25 28" />
+                                <circle cx="13" cy="25" r="2" fill="var(--accent)"/>
+                                <circle cx="23" cy="28" r="2" fill="var(--accent)"/>
+                            </g>
+                        </g>
+                    </svg>
+                    <span>Waiting for audio...</span>
+                </div>
+            </div>
+        </main>
+
+        <footer>
+            <div class="status-indicator">
+                <span id="statusDot" class="dot"></span>
+                <span id="statusText">Ready</span>
+            </div>
+        </footer>
+    </div>
+    <script src="/static/script.js?v={{ v }}"></script>
+</body>
+
+</html>
