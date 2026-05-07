@@ -1,0 +1,158 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Sarvam API STT & Translation (PolyVerba)</title>
+    <style>
+        body { font-family: 'Inter', sans-serif; background-color: #0d1117; color: #c9d1d9; margin: 0; padding: 2rem; display: flex; flex-direction: column; align-items: center; }
+        .container { background: #161b22; padding: 2rem; border-radius: 12px; border: 1px solid #30363d; max-width: 600px; width: 100%; box-shadow: 0 8px 24px rgba(0,0,0,0.5); }
+        h1 { color: #58a6ff; font-size: 1.8rem; margin-top: 0; text-align: center; }
+        .form-group { margin-bottom: 1.5rem; }
+        label { display: block; font-size: 0.9rem; font-weight: 600; margin-bottom: 0.5rem; color: #8b949e; }
+        input[type="file"], select { width: 100%; padding: 0.75rem; background: #0d1117; border: 1px solid #30363d; border-radius: 6px; color: #c9d1d9; font-size: 1rem; box-sizing: border-box; }
+        button { width: 100%; padding: 0.8rem; background: #238636; color: #ffffff; border: none; border-radius: 6px; font-size: 1rem; font-weight: bold; cursor: pointer; transition: background 0.2s; }
+        button:hover { background: #2ea043; }
+        button:disabled { background: #21262d; color: #8b949e; cursor: not-allowed; }
+        .result-box { margin-top: 2rem; background: #0d1117; border: 1px solid #30363d; border-radius: 8px; padding: 1.5rem; }
+        .result-label { font-size: 0.75rem; text-transform: uppercase; color: #8b949e; font-weight: bold; margin-bottom: 0.25rem; }
+        .result-text { font-size: 1.1rem; margin-bottom: 1rem; }
+        .result-translated { color: #3fb950; font-weight: 500; }
+        .badges { display: flex; justify-content: space-between; margin-top: 1rem; font-size: 0.8rem; }
+        .badge { background: #1f6feb; color: #c9d1d9; padding: 0.2rem 0.6rem; border-radius: 12px; }
+        .badge.fallback { background: #d29922; color: #0d1117; }
+    </style>
+</head>
+<body>
+
+<div class="container">
+    <h1>Sarvam Audio Translator</h1>
+    
+    <div class="form-group">
+        <label for="audioFile">Upload Audio File (.wav, .mp3)</label>
+        <input type="file" id="audioFile" accept="audio/*">
+    </div>
+
+    <div class="form-group">
+        <label for="targetLang">Target Language</label>
+        <select id="targetLang">
+            <option value="en-IN">English (en-IN)</option>
+            <option value="hi-IN">Hindi (hi-IN)</option>
+            <option value="ta-IN">Tamil (ta-IN)</option>
+            <option value="te-IN">Telugu (te-IN)</option>
+        </select>
+    </div>
+
+    <button id="submitBtn" onclick="processAudioWithFallback()">Transcribe & Translate</button>
+
+    <div id="resultContainer" class="result-box" style="display: none;">
+        <div class="result-label">Original Text</div>
+        <div id="originalText" class="result-text">...</div>
+        
+        <div class="result-label">Translated Text</div>
+        <div id="translatedText" class="result-text result-translated">...</div>
+
+        <div class="badges">
+            <span class="badge" id="langBadge">Lang: hi-IN</span>
+            <span class="badge" id="envBadge">Edge Execution</span>
+        </div>
+    </div>
+</div>
+
+<script>
+    async function processAudioWithFallback() {
+        const fileInput = document.getElementById('audioFile');
+        const targetLang = document.getElementById('targetLang').value;
+        const btn = document.getElementById('submitBtn');
+        const resultContainer = document.getElementById('resultContainer');
+        
+        if (!fileInput.files.length) {
+            alert("Please select an audio file.");
+            return;
+        }
+
+        btn.disabled = true;
+        btn.innerText = "Processing via Sarvam AI...";
+        resultContainer.style.display = "none";
+
+        const formData = new FormData();
+        formData.append("audio", fileInput.files[0]);
+        formData.append("targetLanguage", targetLang);
+
+        let attempt = 0;
+        const maxRetries = 2;
+        let delay = 1000;
+        let finalResult = null;
+
+        // 1. Try "Edge" Runtime First
+        while (attempt < maxRetries && !finalResult) {
+            try {
+                console.log(`[Edge] Attempt ${attempt + 1}...`);
+                const edgeRes = await fetch("/api/sarvam/edge", { method: "POST", body: formData });
+                if (edgeRes.ok) {
+                    finalResult = await edgeRes.json();
+                } else {
+                    console.warn(`[Edge] Error: ${edgeRes.status}`);
+                }
+            } catch (e) {
+                console.warn(`[Edge] Network error on attempt ${attempt + 1}`);
+            }
+            if (!finalResult) {
+                await new Promise(r => setTimeout(r, delay));
+                delay *= 2;
+                attempt++;
+            }
+        }
+
+        // 2. Fallback to "Cloud" Runtime
+        if (!finalResult) {
+            console.warn("⚠️ Edge execution failed. Falling back to Cloud Backend.");
+            attempt = 0;
+            delay = 1000;
+            while (attempt < maxRetries && !finalResult) {
+                try {
+                    console.log(`[Cloud] Attempt ${attempt + 1}...`);
+                    const cloudRes = await fetch("/api/sarvam/cloud", { method: "POST", body: formData });
+                    if (cloudRes.ok) {
+                        finalResult = await cloudRes.json();
+                    } else {
+                        console.warn(`[Cloud] Error: ${cloudRes.status}`);
+                    }
+                } catch (e) {
+                    console.warn(`[Cloud] Network error on attempt ${attempt + 1}`);
+                }
+                if (!finalResult) {
+                    await new Promise(r => setTimeout(r, delay));
+                    delay *= 2;
+                    attempt++;
+                }
+            }
+        }
+
+        btn.disabled = false;
+        btn.innerText = "Transcribe & Translate";
+
+        if (!finalResult) {
+            alert("Critical Failure: Both Edge and Cloud endpoints failed after retries.");
+            return;
+        }
+
+        document.getElementById('originalText').innerText = finalResult.original_text;
+        document.getElementById('translatedText').innerText = finalResult.translated_text;
+        document.getElementById('langBadge').innerText = `Lang: ${finalResult.language_detected}`;
+        
+        const envBadge = document.getElementById('envBadge');
+        if (finalResult.fallback_used) {
+            envBadge.innerText = 'Node.js Cloud Fallback';
+            envBadge.className = 'badge fallback';
+        } else {
+            envBadge.innerText = 'Edge Execution';
+            envBadge.className = 'badge';
+        }
+        
+        resultContainer.style.display = "block";
+    }
+</script>
+
+</body>
+</html>

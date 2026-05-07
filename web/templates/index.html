@@ -1,0 +1,337 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>PolyVerba - Live Audio Translation</title>
+    <meta name="description" content="PolyVerba provides real-time multilingual system audio transcription and captioning powered by AI models.">
+    
+    <!-- Google Fonts -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Outfit:wght@400;500;700&display=swap" rel="stylesheet">
+    
+    <link rel="stylesheet" href="/static/style.css?v={{ v }}">
+</head>
+<body>
+
+    <main class="app-container">
+        <header class="app-header">
+            <div class="logo">
+                <div class="logo-icon">
+                    <svg viewBox="0 0 24 24" width="24" height="24" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round">
+                        <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"></polygon>
+                        <path d="M19.07 4.93a10 10 0 0 1 0 14.14M15.54 8.46a5 5 0 0 1 0 7.07"></path>
+                    </svg>
+                </div>
+                <h1>PolyVerba</h1>
+            </div>
+            <div class="status-indicator">
+                <span class="status-dot" id="connection-dot"></span>
+                <span id="connection-text">Disconnected</span>
+            </div>
+        </header>
+
+        <section class="controls-card glass-panel">
+            <div class="control-grid">
+                
+                <div class="control-group">
+                    <label for="source-lang">Source Language</label>
+                    <div class="select-wrapper">
+                        <select id="source-lang">
+                            {% for code, name in languages.items() %}
+                                <option value="{{ code }}" {% if code == 'en' %}selected{% endif %}>{{ name }}</option>
+                            {% endfor %}
+                        </select>
+                    </div>
+                </div>
+
+                <div class="control-group">
+                    <label for="target-lang">Target Language</label>
+                    <div class="select-wrapper">
+                        <select id="target-lang">
+                            {% for code, name in languages.items() %}
+                                <option value="{{ code }}" {% if code == 'hi' %}selected{% endif %}>{{ name }}</option>
+                            {% endfor %}
+                        </select>
+                    </div>
+                </div>
+
+                <div class="control-group">
+                    <label for="model-size">Whisper Model</label>
+                    <div class="select-wrapper">
+                        <select id="model-size">
+                            <option value="tiny.en">Tiny (Fastest)</option>
+                            <option value="base.en" selected>Base (Recommended)</option>
+                            <option value="small.en">Small</option>
+                            <option value="medium">Medium</option>
+                        </select>
+                    </div>
+                </div>
+
+                <div class="control-group">
+                    <label for="routing-mode">Routing Mode</label>
+                    <div class="select-wrapper">
+                        <select id="routing-mode">
+                            <option value="auto" selected>Auto Mode</option>
+                            <option value="cloud_only">Sarvam Cloud Only</option>
+                            <option value="local_only">IndicTrans Local Only</option>
+                        </select>
+                    </div>
+                </div>
+
+                <div class="action-buttons">
+                    <button id="start-btn" class="btn btn-primary">
+                        <svg viewBox="0 0 24 24" width="18" height="18" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round"><polygon points="5 3 19 12 5 21 5 3"></polygon></svg>
+                        Start Captions
+                    </button>
+                    <button id="stop-btn" class="btn btn-danger" disabled>
+                        <svg viewBox="0 0 24 24" width="18" height="18" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect></svg>
+                        Stop
+                    </button>
+                </div>
+
+            </div>
+        </section>
+
+        <section class="captions-display">
+            <div class="captions-header" style="display: flex; align-items: center;">
+                <h2>Live Transcript</h2>
+                <div class="pulse-indicator" id="live-indicator" style="display: none; margin-left: 15px;">
+                    <span class="pulse"></span> LIVE
+                </div>
+                <div id="stt-mode-badge" style="display: none; margin-left: 15px; padding: 4px 10px; border-radius: 12px; font-size: 0.85rem; font-weight: bold; background: #3b82f6; color: white;">
+                    Cloud Mode (Sarvam)
+                </div>
+                <div id="latency-meter" style="display: none; margin-left: auto; font-size: 0.9rem; color: #aaa; background: rgba(0,0,0,0.2); padding: 4px 10px; border-radius: 12px;">
+                    Speed: <span id="latency-value" style="font-weight: 600; color: #4ade80;">0.00</span>s
+                </div>
+            </div>
+            <div id="captions-container" class="glass-panel">
+                <div class="placeholder" id="captions-placeholder">
+                    Waiting for audio to start...
+                </div>
+                <!-- Captions will be appended here -->
+                <div id="partial-caption"></div>
+            </div>
+        </section>
+        </section>
+
+        <section class="debug-panel glass-panel" style="margin-top: 20px; font-family: monospace; font-size: 0.85rem; background: rgba(0, 0, 0, 0.4);">
+            <div style="font-weight: bold; margin-bottom: 10px; color: #a78bfa; border-bottom: 1px solid rgba(255,255,255,0.1); padding-bottom: 5px;">Execution Debug Panel</div>
+            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px; color: #d1d5db;">
+                <div>Exec Source: <span id="dbg-exec-source" style="color: #fff;">-</span></div>
+                <div>Sarvam API: <span id="dbg-sarvam" style="color: #fff;">-</span></div>
+                <div>Speaker: <span id="dbg-speaker" style="color: #fff;">-</span></div>
+                <div>Fallback: <span id="dbg-fallback" style="color: #fff;">-</span></div>
+                <div>Latency: <span id="dbg-latency" style="color: #fff;">-</span></div>
+            </div>
+            <div style="margin-top: 15px; border-top: 1px solid rgba(255,255,255,0.1); padding-top: 10px;">
+                <div style="font-weight: bold; margin-bottom: 8px; color: #9ca3af; font-size: 0.75rem; text-transform: uppercase;">Testing Buttons</div>
+                <div style="display: flex; gap: 8px; flex-wrap: wrap;">
+                    <button id="btn-test-sarvam" class="btn btn-primary" style="padding: 4px 8px; font-size: 0.75rem;">Test Sarvam API</button>
+                    <button id="btn-test-local" class="btn btn-primary" style="padding: 4px 8px; font-size: 0.75rem;">Test Local IndicTrans</button>
+                    <button id="btn-sim-loss" class="btn btn-danger" style="padding: 4px 8px; font-size: 0.75rem;">Simulate Internet Loss</button>
+                    <button id="btn-force-disconnect" class="btn btn-danger" style="padding: 4px 8px; font-size: 0.75rem;">Force Cloud Disconnect</button>
+                    <button id="btn-reconnect" class="btn btn-primary" style="padding: 4px 8px; font-size: 0.75rem;">Reconnect Sarvam</button>
+                </div>
+            </div>
+        </section>
+    </main>
+
+    <script>
+        let ws = null;
+        let isStarted = false;
+        const wsProtocol = window.location.protocol === "https:" ? "wss:" : "ws:";
+        
+        const startBtn = document.getElementById("start-btn");
+        const stopBtn = document.getElementById("stop-btn");
+        const connDot = document.getElementById("connection-dot");
+        const connText = document.getElementById("connection-text");
+        const liveIndicator = document.getElementById("live-indicator");
+        const container = document.getElementById("captions-container");
+        const placeholder = document.getElementById("captions-placeholder");
+        const partialCap = document.getElementById("partial-caption");
+        const sttModeBadge = document.getElementById("stt-mode-badge");
+
+        function setMode(modeText, color) {
+            sttModeBadge.style.display = "block";
+            sttModeBadge.innerText = modeText;
+            sttModeBadge.style.background = color;
+        }
+
+        function connectWebSocket() {
+            if (ws && (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING)) {
+                return;
+            }
+            
+            ws = new WebSocket(`${wsProtocol}//${window.location.host}/ws/captions`);
+            
+            ws.onopen = () => {
+                connDot.classList.add("connected");
+                connText.innerText = "Server Connected";
+            };
+            
+            ws.onclose = () => {
+                connDot.classList.remove("connected");
+                connText.innerText = "Disconnected";
+                setTimeout(connectWebSocket, 3000); // Reconnect loop
+            };
+            
+            ws.onmessage = (event) => {
+                const data = JSON.parse(event.data);
+                if (placeholder) {
+                    placeholder.style.display = "none";
+                }
+                
+                // Update mode badge based on runtime reported by backend
+                if (data.runtime === "edge") {
+                    setMode("Offline Mode (Faster-Whisper)", "#f97316");
+                } else if (data.runtime === "cloud") {
+                    setMode("Cloud Mode (Sarvam API)", "#3b82f6");
+                }
+                
+                // Update debug panel
+                if (data.execution_source) document.getElementById("dbg-exec-source").innerText = data.execution_source;
+                if (data.sarvam_api_called !== undefined) document.getElementById("dbg-sarvam").innerText = data.sarvam_api_called;
+                if (data.speaker) document.getElementById("dbg-speaker").innerText = data.speaker;
+                if (data.fallback_triggered !== undefined) document.getElementById("dbg-fallback").innerText = data.fallback_triggered;
+                if (data.latency_ms !== undefined) document.getElementById("dbg-latency").innerText = data.latency_ms.toFixed(2) + " ms";
+                else if (data.latency !== undefined) document.getElementById("dbg-latency").innerText = (data.latency * 1000).toFixed(2) + " ms";
+                
+                if (data.latency !== undefined) {
+                    document.getElementById("latency-meter").style.display = "block";
+                    document.getElementById("latency-value").innerText = data.latency.toFixed(2);
+                }
+                
+                if (data.is_final) {
+                    // Create new final div
+                    const div = document.createElement("div");
+                    div.className = "caption-line final-line animate-in";
+                    div.innerHTML = `<span class="speaker-badge" style="font-weight:bold; color: #a78bfa; margin-right: 8px;">[${data.speaker}]</span>` + data.text;
+                    container.insertBefore(div, partialCap);
+                    
+                    // Clear partial
+                    partialCap.innerText = "";
+                    
+                    // Auto scroll
+                    container.scrollTop = container.scrollHeight;
+                } else {
+                    partialCap.innerHTML = `<span class="speaker-badge" style="font-weight:bold; color: #a78bfa; margin-right: 8px;">[${data.speaker}]</span>` + data.text;
+                    container.scrollTop = container.scrollHeight;
+                }
+            };
+        }
+
+        startBtn.addEventListener("click", async () => {
+            const payload = {
+                source_lang: document.getElementById("source-lang").value,
+                target_lang: document.getElementById("target-lang").value,
+                model: document.getElementById("model-size").value,
+                routing_mode: document.getElementById("routing-mode").value
+            };
+            
+            startBtn.disabled = true;
+            startBtn.innerHTML = "Starting...";
+            
+            try {
+                const res = await fetch("/api/start", {
+                    method: "POST",
+                    headers: {"Content-Type": "application/json"},
+                    body: JSON.stringify(payload)
+                });
+                if (res.ok) {
+                    isStarted = true;
+                    stopBtn.disabled = false;
+                    startBtn.style.display = "none";
+                    stopBtn.style.display = "inline-flex";
+                    liveIndicator.style.display = "flex";
+                } else {
+                    alert("Failed to start transcription.");
+                    startBtn.disabled = false;
+                    startBtn.innerHTML = "Start Captions";
+                }
+            } catch (err) {
+                console.error(err);
+                startBtn.disabled = false;
+                startBtn.innerHTML = "Start Captions";
+            }
+        });
+
+        stopBtn.addEventListener("click", async () => {
+            stopBtn.disabled = true;
+            stopBtn.innerHTML = "Stopping...";
+            try {
+                await fetch("/api/stop", { method: "POST" });
+                isStarted = false;
+                
+                startBtn.style.display = "inline-flex";
+                startBtn.disabled = false;
+                startBtn.innerHTML = "Start Captions";
+                stopBtn.style.display = "none";
+                liveIndicator.style.display = "none";
+                sttModeBadge.style.display = "none";
+                document.getElementById("latency-meter").style.display = "none";
+                
+                partialCap.innerText = "";
+                
+            } catch (err) {
+                console.error(err);
+                stopBtn.disabled = false;
+                stopBtn.innerHTML = "Stop";
+            }
+        });
+
+        // Auto restart on drop-down change
+        async function handleDropdownChange() {
+            if (isStarted) {
+                // Stop and restart to apply new language or model seamlessly
+                stopBtn.disabled = true;
+                await fetch("/api/stop", { method: "POST" });
+                isStarted = false;
+                partialCap.innerText = "Switching language...";
+                startBtn.disabled = false; // Enable the button so the click works!
+                startBtn.click();
+            }
+        }
+        
+        document.getElementById("source-lang").addEventListener("change", handleDropdownChange);
+        document.getElementById("target-lang").addEventListener("change", handleDropdownChange);
+        document.getElementById("model-size").addEventListener("change", handleDropdownChange);
+        document.getElementById("routing-mode").addEventListener("change", handleDropdownChange);
+
+        // Testing Buttons Logic
+        document.getElementById("btn-test-sarvam").addEventListener("click", () => {
+            document.getElementById("routing-mode").value = "cloud_only";
+            if (!isStarted) startBtn.click();
+            else handleDropdownChange();
+        });
+        
+        document.getElementById("btn-test-local").addEventListener("click", () => {
+            document.getElementById("routing-mode").value = "local_only";
+            if (!isStarted) startBtn.click();
+            else handleDropdownChange();
+        });
+
+        document.getElementById("btn-sim-loss").addEventListener("click", async () => {
+            if (isStarted) {
+                await fetch("/api/simulate", { method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify({network_failure: true}) });
+            }
+        });
+
+        document.getElementById("btn-force-disconnect").addEventListener("click", () => {
+            if (ws) {
+                ws.close();
+            }
+        });
+
+        document.getElementById("btn-reconnect").addEventListener("click", async () => {
+            await fetch("/api/simulate", { method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify({network_failure: false}) });
+            if (!ws || ws.readyState !== WebSocket.OPEN) connectWebSocket();
+        });
+
+        // Initialize WS
+        connectWebSocket();
+    </script>
+</body>
+</html>

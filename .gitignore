@@ -1,0 +1,8 @@
+venv/
+.env
+__pycache__/
+*.pyc
+pretrained_models/
+*.log
+*.txt
+.vscode/
