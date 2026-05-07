@@ -4,7 +4,9 @@ import sys
 import queue
 import time
 import threading
+import math
 import torch
+from scipy.signal import resample_poly
 from stt.transcribe import Transcriber
 
 # Configuration
@@ -18,6 +20,47 @@ audio_queue = queue.Queue()
 transcription_queue = queue.Queue() # For passing audio to worker thread
 result_queue = queue.Queue()        # For passing text back to main thread
 
+# Module-level model cache — keyed by (model, device, lang) so reloads only when needed
+_model_cache: dict = {}
+
+# True once the Whisper model has been loaded and is ready to transcribe
+model_ready: bool = False
+
+def preload_whisper(model_size: str = "base") -> None:
+    """
+    Pre-loads the Whisper model into _model_cache at server startup so that
+    clicking Start has zero model-load delay.  Called from a background thread
+    by web_server.py during the lifespan startup phase.
+    """
+    global model_ready
+    try:
+        from dotenv import load_dotenv
+        load_dotenv()
+
+        device = "cuda" if torch.cuda.is_available() else "cpu"
+        t_key = f"transcriber_{model_size}_{device}"
+        if t_key not in _model_cache:
+            print(f"[Preload] Loading Whisper ({model_size}) on {device}...")
+            _model_cache[t_key] = Transcriber(
+                model_size=model_size,
+                device=device,
+                compute_type="int8" if device == "cpu" else "float16"
+            )
+            print(f"[Preload] Whisper ({model_size}) ready ✓")
+        else:
+            print(f"[Preload] Whisper ({model_size}) already cached ✓")
+
+        # Also pre-load the cloud fallback (lightweight, just sets up the client)
+        from stt.transcribe import CloudWhisperEngine
+        if 'cloud_transcriber' not in _model_cache:
+            _model_cache['cloud_transcriber'] = CloudWhisperEngine()
+
+        model_ready = True
+    except Exception as e:
+        print(f"[Preload] Failed to preload Whisper: {e}")
+        # model_ready stays False — /api/start will surface the error to the UI
+
+
 def find_cable_output():
     """Finds the audio input device."""
     devices = sd.query_devices()
@@ -30,16 +73,21 @@ def find_cable_output():
             cable_candidates.append((i, dev))
             
     if cable_candidates:
-        # Prefer MME or DirectSound for compatibility (WASAPI/WDM-KS can be flaky)
-        for i, dev in cable_candidates:
-            api_name = hostapis[dev['hostapi']]['name']
-            if "MME" in api_name:
-                print(f"Selected CABLE (MME): {i} - {dev['name']}")
-                return i, dev
+        # Prefer DirectSound for maximum compatibility with arbitrary block sizes
         for i, dev in cable_candidates:
             api_name = hostapis[dev['hostapi']]['name']
             if "DirectSound" in api_name:
                 print(f"Selected CABLE (DS): {i} - {dev['name']}")
+                return i, dev
+        for i, dev in cable_candidates:
+            api_name = hostapis[dev['hostapi']]['name']
+            if "WASAPI" in api_name:
+                print(f"Selected CABLE (WASAPI): {i} - {dev['name']}")
+                return i, dev
+        for i, dev in cable_candidates:
+            api_name = hostapis[dev['hostapi']]['name']
+            if "MME" in api_name:
+                print(f"Selected CABLE (MME): {i} - {dev['name']}")
                 return i, dev
                 
         # Fallback to any CABLE
@@ -61,12 +109,46 @@ def find_cable_output():
 def callback(indata, frames, time, status):
     if status:
         print(status, file=sys.stderr)
-    audio_queue.put(indata.copy())
+    
+    # Downmix to mono if multiple channels are captured
+    if indata.ndim > 1 and indata.shape[1] > 1:
+        mono_data = np.mean(indata, axis=1, keepdims=True)
+        audio_queue.put(mono_data.copy())
+    else:
+        audio_queue.put(indata.copy())
 
 from stt.translate import Translator, FLORES_CODES
 
 import argparse
 import shutil
+
+import re as _re
+
+def _translate_preserving_speaker_tags(text: str, translate_fn) -> str:
+    """
+    Strip [Speaker N]: prefix tags from `text`, translate only the speech
+    content, then re-attach the original tags.  This ensures the frontend
+    speaker-pill highlighting works correctly for every output language.
+
+    Handles multi-speaker segments separated by newlines, e.g.:
+        [Speaker 1]: Hello
+        [Speaker 2]: World
+    """
+    # Pattern matches optional leading newline + [Speaker N]: at line start
+    SPEAKER_RE = _re.compile(r'(\n?\[Speaker \d+\]:)')
+    parts = SPEAKER_RE.split(text)
+    # parts alternates: [plain?, tag, plain, tag, plain, ...]
+    result = []
+    for part in parts:
+        if SPEAKER_RE.match(part):
+            # It's a speaker tag — keep as-is
+            result.append(part)
+        elif part.strip():
+            # It's speech content — translate it
+            result.append(translate_fn(part))
+        else:
+            result.append(part)
+    return "".join(result)
 
 def transcription_worker(model_config, tx_queue, res_queue):
     """Worker thread that runs the heavy Whisper inference AND Translation."""
@@ -89,35 +171,48 @@ def transcription_worker(model_config, tx_queue, res_queue):
         from dotenv import load_dotenv
         load_dotenv()
         
-        global _loaded_transcriber, _loaded_translator, _cloud_transcriber, _cloud_translator
-        if '_loaded_transcriber' not in globals() or getattr(_loaded_transcriber, 'model_size', None) != model_size:
-            print(f"Loading Whisper on device: {device}")
-            _loaded_transcriber = Transcriber(model_size=model_size, device=device, compute_type="int8" if device=="cpu" else "float16")
-            _loaded_transcriber.model_size = model_size
-        transcriber = _loaded_transcriber
-        
+        t_key = f"transcriber_{model_size}_{device}"
+        if t_key not in _model_cache:
+            print(f"Loading Whisper ({model_size}) on device: {device}")
+            _model_cache[t_key] = Transcriber(model_size=model_size, device=device, compute_type="int8" if device=="cpu" else "float16")
+        transcriber = _model_cache[t_key]
+
         from stt.transcribe import CloudWhisperEngine
-        if '_cloud_transcriber' not in globals():
-            _cloud_transcriber = CloudWhisperEngine()
-        cloud_transcriber = _cloud_transcriber
+        if 'cloud_transcriber' not in _model_cache:
+            _model_cache['cloud_transcriber'] = CloudWhisperEngine()
+        cloud_transcriber = _model_cache['cloud_transcriber']
         
         translator = None
         cloud_translator = None
+        diarizer = None
         if use_translation:
-            if '_loaded_translator' not in globals() or getattr(_loaded_translator, 'source_lang', None) != source_lang or getattr(_loaded_translator, 'target_lang', None) != target_lang:
-                print(f"Loading Translator (Source: {source_lang} -> Target: {target_lang})...")
-                _loaded_translator = Translator(target_lang=target_lang, source_lang=source_lang)
-            translator = _loaded_translator
-            
+            tx_key = f"translator_{source_lang}_{target_lang}"
+            if tx_key not in _model_cache:
+                print(f"Loading Translator ({source_lang} -> {target_lang})...")
+                _model_cache[tx_key] = Translator(target_lang=target_lang, source_lang=source_lang)
+            translator = _model_cache[tx_key]
+
             from stt.translate import CloudTranslateEngine
-            if '_cloud_translator' not in globals() or getattr(_cloud_translator, 'source_lang', None) != source_lang or getattr(_cloud_translator, 'target_lang', None) != target_lang:
-                _cloud_translator = CloudTranslateEngine(target_lang=target_lang, source_lang=source_lang)
-            cloud_translator = _cloud_translator
+            ctx_key = f"cloud_translator_{source_lang}_{target_lang}"
+            if ctx_key not in _model_cache:
+                _model_cache[ctx_key] = CloudTranslateEngine(target_lang=target_lang, source_lang=source_lang)
+            cloud_translator = _model_cache[ctx_key]
+
+            from stt.diarization import PyannoteDiarizer
+            if 'diarizer' not in _model_cache:
+                _model_cache['diarizer'] = PyannoteDiarizer()
+            diarizer = _model_cache['diarizer']
         
         print("Models loaded. Worker ready.")
         
         # State to cache detected language over consecutive streaming chunks
         current_detected_lang = None
+        # Persistent speaker label map — keeps labels consistent across the whole session
+        speaker_label_map = {}
+        def get_friendly_speaker(raw_id):
+            if raw_id not in speaker_label_map:
+                speaker_label_map[raw_id] = f"Speaker {len(speaker_label_map) + 1}"
+            return speaker_label_map[raw_id]
         
         while True:
             # Get audio buffer
@@ -127,6 +222,7 @@ def transcription_worker(model_config, tx_queue, res_queue):
                 break
                 
             # Transcribe
+            start_time = time.time()
             try:
                 # Decide which language to pass to whisper
                 if source_lang != "auto":
@@ -141,7 +237,8 @@ def transcription_worker(model_config, tx_queue, res_queue):
                         beam_size=1, 
                         vad_filter=True, 
                         language=whisper_lang,
-                        condition_on_previous_text=False
+                        condition_on_previous_text=False,
+                        word_timestamps=True
                     )
                     source_identifier = "Local"
                 except Exception as e:
@@ -155,35 +252,64 @@ def transcription_worker(model_config, tx_queue, res_queue):
                         current_detected_lang = info.language
                         print(f"Auto-detected language locked for phrase: {current_detected_lang} ({info.language_probability})")
                 
-                text = " ".join([s.text for s in segments]).strip()
+                segments_list = list(segments)
+                if is_final and diarizer:
+                    # Diarization is expensive — only run on committed final phrases
+                    diarization_segments = diarizer.diarize(audio_data, SAMPLE_RATE)
+                    formatted_text = ""
+                    current_speaker = None
+                    for segment in segments_list:
+                        if not getattr(segment, 'words', None):
+                            formatted_text += segment.text + " "
+                            continue
+                        for word in segment.words:
+                            word_start = word.start
+                            word_end = word.end
+                            raw_speaker = "SPEAKER_00"
+                            max_overlap = 0
+                            for ds in diarization_segments:
+                                overlap = max(0, min(word_end, ds['end']) - max(word_start, ds['start']))
+                                if overlap > max_overlap:
+                                    max_overlap = overlap
+                                    raw_speaker = ds['speaker']
+                            assigned_speaker = get_friendly_speaker(raw_speaker)
+                            if assigned_speaker != current_speaker:
+                                current_speaker = assigned_speaker
+                                formatted_text += f"\n[{current_speaker}]:"
+                            formatted_text += word.word
+                    text = formatted_text.strip()
+                else:
+                    # Partial update: fast path — no diarization overhead
+                    text = " ".join(seg.text for seg in segments_list).strip()
                 
                 # Reset detection lock at the end of phrase, ready for a new speaker/language
                 if is_final:
                     current_detected_lang = None
                 
                 if text:
+                    latency = round(time.time() - start_time, 2)
                     if is_final:
                         if translator:
                             try:
-                                translated_text = translator.translate(text)
+                                translated_text = _translate_preserving_speaker_tags(text, translator.translate)
                             except Exception as e:
                                 print(f"Local Translate Failed ({e}). Falling back to Cloud...")
-                                translated_text = cloud_translator.translate(text)
+                                translated_text = _translate_preserving_speaker_tags(text, cloud_translator.translate)
                                 source_identifier = "Cloud"
                                 
-                            res_queue.put((translated_text, is_final, source_identifier))
+                            res_queue.put((translated_text, is_final, source_identifier, latency))
                         else:
-                            res_queue.put((text, is_final, source_identifier))
+                            res_queue.put((text, is_final, source_identifier, latency))
                     else:
                         # Partial update - LIVE TRANSLATION ENABLED
                         if translator:
                             try:
-                                partial_translation = translator.translate(text)
-                                res_queue.put((partial_translation, is_final, source_identifier))
+                                partial_translation = _translate_preserving_speaker_tags(text, translator.translate)
+                                res_queue.put((partial_translation, is_final, source_identifier, latency))
                             except Exception:
-                                res_queue.put((text, is_final, source_identifier))
+                                res_queue.put((text, is_final, source_identifier, latency))
                         else:
-                            res_queue.put((text, is_final, source_identifier))
+                            res_queue.put((text, is_final, source_identifier, latency))
             except Exception as e:
                 print(f"Error in transcription/translation: {e}")
                 
@@ -263,10 +389,7 @@ def audio_capture_loop(device_id, device_samplerate, stop_event):
     """Refactored main loop for audio capture."""
     block_size = int(device_samplerate * BLOCK_DURATION)
     
-    # Resampling step
-    step = 1
-    if device_samplerate != SAMPLE_RATE:
-        step = int(device_samplerate / SAMPLE_RATE)
+    # Resampling ratio (used later when audio is processed)
 
     print(f"Listening on device ID: {device_id} at {device_samplerate}Hz")
     
@@ -275,7 +398,8 @@ def audio_capture_loop(device_id, device_samplerate, stop_event):
     last_transcript_request_time = 0
     
     try:
-        with sd.InputStream(device=device_id, channels=1, samplerate=device_samplerate, blocksize=block_size, callback=callback):
+        # Let PortAudio use default channels and blocksize to maximize compatibility
+        with sd.InputStream(device=device_id, samplerate=device_samplerate, callback=callback):
             while not stop_event.is_set():
                 # 1. Process Audio Queue
                 try:
@@ -283,26 +407,21 @@ def audio_capture_loop(device_id, device_samplerate, stop_event):
                         chunk = audio_queue.get_nowait()
                         phrase_buffer.append(chunk)
                         
+                        chunk_duration = len(chunk) / device_samplerate
                         rms = np.sqrt(np.mean(chunk**2))
                         if rms < SILENCE_THRESHOLD:
-                            silence_counter += BLOCK_DURATION
+                            silence_counter += chunk_duration
                         else:
                             silence_counter = 0
                 except queue.Empty:
                     pass
                 
-                # 2. Check for Transcription Results (UI will poll result_queue directly, or we can print to stdout here if needed)
-                # For CLI usage, we print. For API, we leave it in queue or consume it elsewhere.
-                # To support both, we can peek/get here and put it back? No, result_queue is consumed by consumer.
-                # For CLI mode, the main() function consumes it. For API, the API consumes it.
-                # BUT this loop is running in a thread now.
-                # Let's keep this loop FOCUSED on Audio -> Transcription Queue.
-                # The Result Queue consumption should be separate.
+                # 2. Check for Transcription Results
                 pass 
 
                 # 3. Schedule Transcription
                 current_time = time.time()
-                buffer_duration = len(phrase_buffer) * BLOCK_DURATION
+                buffer_duration = sum(len(c) for c in phrase_buffer) / device_samplerate if phrase_buffer else 0
                 
                 should_commit = (silence_counter >= SILENCE_DURATION_TO_COMMIT and buffer_duration > 1.0) or (buffer_duration > 15.0)
                 should_update = (current_time - last_transcript_request_time > PARTIAL_UPDATE_INTERVAL) and buffer_duration > 0.5
@@ -313,9 +432,10 @@ def audio_capture_loop(device_id, device_samplerate, stop_event):
                         
                     audio_data = np.concatenate(phrase_buffer, axis=0)
                     audio_data = audio_data.flatten()
-                    if step > 1:
-                        audio_data = audio_data[::step]
-                    
+                    if device_samplerate != SAMPLE_RATE:
+                        g = math.gcd(SAMPLE_RATE, device_samplerate)
+                        audio_data = resample_poly(audio_data, SAMPLE_RATE // g, device_samplerate // g)
+
                     transcription_queue.put((audio_data, should_commit))
                     last_transcript_request_time = current_time
                     

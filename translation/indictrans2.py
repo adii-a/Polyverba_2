@@ -1,9 +1,6 @@
 import torch
 from transformers import AutoTokenizer, AutoModelForSeq2SeqLM
 
-import torch
-from transformers import AutoTokenizer, AutoModelForSeq2SeqLM
-
 # Model definitions
 MODELS = {
     "en-indic": "ai4bharat/indictrans2-en-indic-dist-200M",
@@ -33,9 +30,13 @@ def load_model(direction):
     model_name = MODELS[direction]
     print(f"Loading IndicTrans2 Model: {direction} ({model_name})...")
     
+    dtype = torch.float16 if device == "cuda" else torch.float32
     tokenizer = AutoTokenizer.from_pretrained(model_name, trust_remote_code=True)
-    model = AutoModelForSeq2SeqLM.from_pretrained(model_name, trust_remote_code=True)
+    model = AutoModelForSeq2SeqLM.from_pretrained(model_name, trust_remote_code=True, torch_dtype=dtype)
     model.to(device)
+    
+    # Optional: compile model for even faster inference if using PyTorch 2.0+
+    # model = torch.compile(model)
     
     loaded_models[direction] = (tokenizer, model)
     return tokenizer, model
@@ -45,8 +46,7 @@ def translate_text(text, src="eng_Latn", tgt="hin_Deva"):
         return ""
 
     direction = get_model_direction(src, tgt)
-    print(f"[DEBUG] IndicTrans2 Direction: {direction} (src={src}, tgt={tgt})")
-    
+
     if not direction:
         print(f"Unsupported translation direction: {src} -> {tgt}")
         return text

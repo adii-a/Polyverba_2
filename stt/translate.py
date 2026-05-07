@@ -1,6 +1,11 @@
+import logging
+import os
+import requests
 from deep_translator import GoogleTranslator
 from transformers import AutoModelForSeq2SeqLM, AutoTokenizer
 import torch
+
+logger = logging.getLogger(__name__)
 
 # Map common codes to FLORES codes used by IndicTrans2
 FLORES_CODES = {
@@ -87,9 +92,8 @@ class Translator:
                 src_code = FLORES_CODES.get(self.source_lang, "eng_Latn")
                 tgt_code = FLORES_CODES.get(self.target_lang, "hin_Deva")
                 
-                with open("debug_server.log", "a") as f:
-                    f.write(f"[DEBUG] FLORES keys: {list(FLORES_CODES.keys())[:5]}... ta in keys: {'ta' in FLORES_CODES}\n")
-                    f.write(f"[DEBUG] IndicTrans call: src={src_code} ({self.source_lang}), tgt={tgt_code} ({self.target_lang}), text='{text[:20]}...'\n")
+                logger.debug("IndicTrans call: src=%s (%s), tgt=%s (%s), text='%s...'",
+                             src_code, self.source_lang, tgt_code, self.target_lang, text[:20])
 
                 return self.indic_translate_func(text, src=src_code, tgt=tgt_code)
                 
@@ -104,8 +108,6 @@ class Translator:
                 print(f"Translation Error: {e}")
                 return text
 
-import os
-import requests
 
 class CloudTranslateEngine:
     def __init__(self, target_lang='hi', source_lang='en'):

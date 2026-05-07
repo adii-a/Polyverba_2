@@ -17,6 +17,7 @@
             <div class="logo">
                 <h1>PolyVerba</h1>
                 <span class="badge" id="sourceBadge">Edge Local</span>
+                <span class="badge" id="latencyBadge" style="display: none; background-color: #475569; font-family: monospace;"></span>
             </div>
             <div class="controls">
                 <div class="select-group">
@@ -35,6 +36,16 @@
                         {% for code, name in languages.items() %}
                         <option value="{{ code }}" {% if code=='hi' %}selected{% endif %}>{{ name }}</option>
                         {% endfor %}
+                    </select>
+                </div>
+
+                <div class="select-group">
+                    <label>Size</label>
+                    <select id="fontSize">
+                        <option value="0.75rem">Small</option>
+                        <option value="0.85rem" selected>Medium</option>
+                        <option value="1.1rem">Large</option>
+                        <option value="1.5rem">Extra Large</option>
                     </select>
                 </div>
 

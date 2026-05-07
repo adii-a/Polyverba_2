@@ -58,14 +58,14 @@ header {
     display: flex;
     justify-content: space-between;
     align-items: center;
-    padding: 1.25rem 2.5rem;
+    padding: 0.75rem 1.75rem;
     background: var(--card-bg);
     backdrop-filter: blur(20px);
     -webkit-backdrop-filter: blur(20px);
     border-radius: 24px;
     box-shadow: var(--card-shadow);
     border: 1px solid var(--card-border);
-    margin-bottom: 2rem;
+    margin-bottom: 1rem;
     transition: transform 0.3s ease;
 }
 
@@ -200,26 +200,70 @@ select:focus {
 main {
     flex: 1;
     display: flex;
+    flex-direction: column; /* Fix: forces vertical constraint */
     min-height: 0;
 }
 
 .caption-box {
     flex: 1;
+    min-height: 0; /* Critical: prevents box from growing past main's height */
     background: var(--card-bg);
     border-radius: 24px;
-    padding: 3rem;
-    font-size: 2.25rem;
-    font-weight: 300;
+    padding: 1.5rem 2rem;
+    font-size: 0.85rem;
+    font-weight: 400;
     line-height: 1.6;
-    display: flex;
-    flex-direction: column;
-    justify-content: flex-end; /* Text fills from bottom */
+    /* display:block (not flex) is required for overflow-y:auto to work correctly.
+       Flex containers don't properly compute scrollable overflow for flex children. */
+    display: block;
     overflow-y: auto;
+    overflow-x: hidden;
     position: relative;
     box-shadow: var(--card-shadow);
     border: 1px solid var(--card-border);
     backdrop-filter: blur(20px);
     -webkit-backdrop-filter: blur(20px);
+}
+
+/* Speaker diarization tag — color/shadow applied per-speaker in JS */
+.speaker-tag {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.38em;
+    color: white;
+    font-size: 0.72em;
+    font-weight: 700;
+    padding: 0.28em 0.75em 0.28em 0.55em;
+    border-radius: 999px;
+    margin-right: 0.55em;
+    margin-left: 0.1em;
+    letter-spacing: 0.4px;
+    vertical-align: middle;
+    white-space: nowrap;
+    user-select: none;
+    border: 1px solid rgba(255,255,255,0.25);
+    /* Slight inner glow to make it feel glass-like */
+    box-shadow: inset 0 1px 0 rgba(255,255,255,0.3), 0 3px 10px rgba(0,0,0,0.2);
+    transition: transform 0.15s ease, box-shadow 0.15s ease;
+}
+
+.speaker-tag:hover {
+    transform: translateY(-1px) scale(1.04);
+}
+
+/* Small pulsing dot inside the pill */
+.speaker-dot {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: rgba(255,255,255,0.9);
+    flex-shrink: 0;
+    animation: speakerDotPulse 2s ease-in-out infinite;
+}
+
+@keyframes speakerDotPulse {
+    0%, 100% { opacity: 1;   transform: scale(1); }
+    50%       { opacity: 0.5; transform: scale(0.75); }
 }
 
 .caption-line {
@@ -237,21 +281,41 @@ main {
     opacity: 0.8;
 }
 
+/* Session restart separator */
+.session-sep {
+    text-align: center;
+    font-size: 0.7rem;
+    font-weight: 500;
+    color: var(--text-secondary);
+    opacity: 0.5;
+    letter-spacing: 0.5px;
+    padding: 0.75rem 0;
+    margin: 0.5rem 0;
+    border-top: 1px dashed var(--card-border);
+    border-bottom: 1px dashed var(--card-border);
+}
+
 .placeholder {
     color: #cbd5e1;
     text-align: center;
-    margin-top: auto;
-    margin-bottom: auto;
+    /* Use absolute centering since caption-box is now display:block */
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    width: max-content;
+    max-width: 90%;
     font-size: 1.5rem;
     font-weight: 400;
     display: flex;
     flex-direction: column;
     align-items: center;
     gap: 1rem;
+    pointer-events: none;
 }
 
 footer {
-    margin-top: 1.5rem;
+    margin-top: 0.75rem;
     display: flex;
     justify-content: flex-end;
 }
@@ -332,8 +396,8 @@ footer {
     }
 
     .caption-box {
-        font-size: 1.5rem;
-        padding: 1.5rem;
+        font-size: 0.75rem;
+        padding: 1rem;
         border-radius: 16px;
     }
     

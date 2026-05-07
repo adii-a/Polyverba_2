@@ -19,12 +19,19 @@ class Transcriber:
             print("Falling back to CPU int8...")
             self.model = WhisperModel(model_size, device="cpu", compute_type="int8")
 
-    def transcribe(self, audio_array):
+    def transcribe(self, audio_array, whisper_lang=None):
         """
         Transcribes the given audio array (numpy array).
         Returns a generator of segments.
         """
-        segments, info = self.model.transcribe(audio_array, beam_size=1, vad_filter=True)
+        segments, info = self.model.transcribe(
+            audio_array, 
+            beam_size=1, 
+            vad_filter=True,
+            language=whisper_lang,
+            condition_on_previous_text=False,
+            word_timestamps=True
+        )
         return segments, info
 
 class CloudWhisperEngine:

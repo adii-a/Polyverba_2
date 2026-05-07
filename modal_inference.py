@@ -42,7 +42,7 @@ class CloudPolyverba:
         print(f"Loading {model_name}...")
         
         tokenizer = AutoTokenizer.from_pretrained(model_name, trust_remote_code=True)
-        model = AutoModelForSeq2SeqLM.from_pretrained(model_name, trust_remote_code=True)
+        model = AutoModelForSeq2SeqLM.from_pretrained(model_name, trust_remote_code=True, torch_dtype=torch.float16)
         model.to(self.device)
         self.translator_models[direction] = (tokenizer, model)
             
